@@ -62,35 +62,48 @@ export const sendFriendRequest = async (req, res) => {
   }
 };
 
-const acceptFriendRequest = async (req, res) => {
-  const { requestId } = req.params;
-  const userId = req.user._id;
+export const acceptFriendRequest = async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const userId = req.user._id;
 
-  const request = await FriendRequest.findById(requestId)
-    .populate("from", "username avatar fullName")
-    .populate("to", "username avatar fullName");
+    const request = await FriendRequest.findById(requestId);
 
-  if (!request || request.to._id.toString() !== userId.toString()) {
-    return res.status(403).json({ message: "Không có quyền" });
+    if (!request) {
+      return res
+        .status(404)
+        .json({ message: "Không tìm thấy lời mời kết bạn" });
+    }
+
+    if (request.to.toString() !== userId.toString()) {
+      return res
+        .status(403)
+        .json({ message: "Bạn không có quyền chấp nhận lời mời này" });
+    }
+
+    const friend = await Friend.create({
+      userA: request.from,
+      userB: request.to,
+    });
+
+    await FriendRequest.findByIdAndDelete(requestId);
+
+    const from = await User.findById(request.from)
+      .select("_id displayName avatarUrl")
+      .lean();
+
+    return res.status(200).json({
+      message: "Chấp nhận lời mời kết bạn thành công",
+      newFriend: {
+        _id: from?._id,
+        displayName: from?.displayName,
+        avatarUrl: from?.avatarUrl,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi chấp nhận lời mời kết bạn", error);
+    return res.status(500).json({ message: "Lỗi hệ thống" });
   }
-
-  await Friend.create([{ userA: request.from._id, userB: request.to._id }]);
-  await FriendRequest.findByIdAndUpdate(requestId, { status: "accepted" });
-
-  // Emit cho người gửi lời mời (bên kia)
-  io.to(request.from._id.toString()).emit("friend-request-accepted", {
-    requestId: request._id,
-    user: request.to, // Người vừa accept
-    message: `${request.to.username} đã chấp nhận lời mời kết bạn`,
-  });
-
-  // Emit cho chính người accept (cập nhật UI)
-  io.to(request.to._id.toString()).emit("friend-request-accepted", {
-    requestId: request._id,
-    user: request.from, // Người gửi lời mời
-  });
-
-  res.json({ message: "Đã chấp nhận lời mời kết bạn" });
 };
 
 export const declineFriendRequest = async (req, res) => {
